@@ -1,0 +1,47 @@
+# ---------- Secrets and local config ----------
+.env
+*.env
+!.env.example
+*.pem
+*.key
+*.p12
+*_rsa
+*_ed25519
+credentials*.json
+*-sa-key*.json
+secrets/
+
+# ---------- Terraform ----------
+# State holds secret values in plaintext. Never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfplan
+tfplan
+# Real variable values and backend settings stay local
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+backend.hcl
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored.
+# Commit it so every run uses the same verified provider build.
+
+# ---------- Router and firewall exports ----------
+config.boot
+*.boot
+!*.boot.example
+*-config.xml
+config-*.xml
+
+# ---------- OS and editor noise ----------
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

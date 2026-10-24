@@ -1,0 +1,49 @@
+# Copy to terraform.tfvars (git-ignored) and replace every placeholder.
+# No secrets belong here. PSKs live in Secret Manager (psk_secret_id).
+
+project_id  = "your-project-id"
+alert_email = "you@example.com"
+
+# Read the real values with:
+#   gcloud compute instances describe vm-hub-test --zone=$ZONE --format="yaml(serviceAccounts)"
+vm_service_account = {
+  email  = "PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+  scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+}
+
+# Every *_name, description and redundancy_type must match GCP exactly
+# when importing. description and redundancy_type force replacement.
+tunnels = {
+  opnsense = {
+    peer_gateway_name = "peer-home"
+    redundancy_type   = "SINGLE_IP_INTERNALLY_REDUNDANT"
+    description       = "OPNsense at home"
+    tunnel_name       = "tun-home-0"
+    router_if_name    = "if-tun-home-0"
+    bgp_peer_name     = "bgp-home-0"
+    gateway_interface = 0
+    peer_ip           = "203.0.113.13"
+    peer_asn          = 65002
+    bgp_cloud_ip      = "169.254.10.1"
+    bgp_peer_ip       = "169.254.10.2"
+    psk_secret_id     = "psk-opnsense"
+  }
+
+  vyos = {
+    peer_gateway_name = "peer-home-vyos"
+    redundancy_type   = "SINGLE_IP_INTERNALLY_REDUNDANT"
+    description       = "VyOS at home"
+    tunnel_name       = "tun-home-1"
+    router_if_name    = "if-tun-home-1"
+    bgp_peer_name     = "bgp-home-1"
+    gateway_interface = 1
+    peer_ip           = "203.0.113.14"
+    peer_asn          = 65003
+    bgp_cloud_ip      = "169.254.20.1"
+    bgp_peer_ip       = "169.254.20.2"
+    psk_secret_id     = "psk-vyos"
+  }
+}
+
+# [] = zero tunnel cost. ["opnsense"] = ~USD 0.05/hr. Both = ~USD 0.10/hr.
+enabled_tunnels = ["opnsense", "vyos"]

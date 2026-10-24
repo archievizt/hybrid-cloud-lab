@@ -1,0 +1,82 @@
+# Plan-only CI for the GCP side. Never applies.
+# Auth is keyless (Workload Identity Federation). No JSON keys, no PSKs in GitHub.
+# Third-party actions are pinned to full commit SHAs; the tag is in the comment.
+
+name: terraform-plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-plan.yml"
+
+# Default: no permissions. Each job asks only for what it needs.
+permissions: {}
+
+concurrency:
+  group: terraform-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    # Fork PRs get no OIDC token and must never reach the cloud account.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read   # check out the code
+      id-token: write  # mint the OIDC token for Workload Identity Federation
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    # Non-secret settings come from repository Variables (Settings > Secrets and
+    # variables > Actions > Variables). They are passed through env, never
+    # interpolated directly into run: scripts, which prevents script injection.
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "0"
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_VAR_project_id: ${{ vars.PROJECT_ID }}
+      TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+      TF_VAR_vm_service_account: ${{ vars.TF_VM_SERVICE_ACCOUNT_JSON }}
+      TF_VAR_tunnels: ${{ vars.TF_TUNNELS_JSON }}
+      TF_VAR_enabled_tunnels: ${{ vars.TF_ENABLED_TUNNELS_JSON || '[]' }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Google Cloud (keyless)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION }} # exact, e.g. the output of `terraform version`
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init
+        run: terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="prefix=hybrid-lab"
+
+      - name: Validate
+        run: terraform validate
+
+      # Public repo: Actions logs are public. A full plan prints project IDs,
+      # addresses and resource IDs. Print the summary line only.
+      # The plan file contains secret values: it is never uploaded.
+      - name: Plan (summary only)
+        run: |
+          terraform plan -no-color -lock=false -parallelism=2 -out=tfplan > /dev/null
+          terraform show -no-color tfplan | grep -E '^(Plan:|No changes)' || true
+          rm -f tfplan

@@ -1,0 +1,155 @@
+# VyOS edge router: complete working configuration as `set` commands.
+# Tested on VyOS Stream (1.5 line). Placeholders in <ANGLE_BRACKETS>.
+# Paste in CONFIGURATION mode one block at a time, then count lines before commit.
+# The PSK is NOT here. Read it from Secret Manager at paste time:
+#   gcloud secrets versions access latest --secret=psk-vyos
+
+# ---------- System ----------
+set system host-name 'vyos-edge'
+set system name-server '1.1.1.1'
+set system name-server '9.9.9.9'
+set system time-zone 'America/Vancouver'
+
+# ---------- Interfaces ----------
+set interfaces ethernet eth0 description 'WAN'
+set interfaces ethernet eth0 address '<VYOS_WAN_IP>/29'
+set interfaces ethernet eth1 description 'LAB-LAN-VYOS'
+set interfaces ethernet eth1 address '10.2.20.1/24'
+set protocols static route 0.0.0.0/0 next-hop '<ISP_GATEWAY_IP>'
+
+# ---------- Management (LAN only, keys only) ----------
+set service ssh listen-address '10.2.20.1'
+set service ssh port '22'
+# Only after you have added your SSH public key, or you lock yourself out of SSH:
+#   set system login user vyos authentication public-keys me key '<PUBLIC_KEY_BODY>'
+#   set system login user vyos authentication public-keys me type 'ssh-ed25519'
+#   set service ssh disable-password-authentication
+
+# ---------- NAT, DHCP, DNS for the lab LAN ----------
+set nat source rule 100 description 'LAN to internet'
+set nat source rule 100 outbound-interface name 'eth0'
+set nat source rule 100 source address '10.2.20.0/24'
+set nat source rule 100 translation address 'masquerade'
+
+set service dhcp-server shared-network-name LAB subnet 10.2.20.0/24 subnet-id '1'
+set service dhcp-server shared-network-name LAB subnet 10.2.20.0/24 option default-router '10.2.20.1'
+set service dhcp-server shared-network-name LAB subnet 10.2.20.0/24 option name-server '10.2.20.1'
+set service dhcp-server shared-network-name LAB subnet 10.2.20.0/24 range POOL start '10.2.20.100'
+set service dhcp-server shared-network-name LAB subnet 10.2.20.0/24 range POOL stop '10.2.20.200'
+
+set service dns forwarding listen-address '10.2.20.1'
+set service dns forwarding allow-from '10.2.20.0/24'
+set service dns forwarding system
+
+# ---------- IPsec phase 1 (expect 11 lines from: show configuration commands | match GCP-IKE) ----------
+set vpn ipsec ike-group GCP-IKE key-exchange 'ikev2'
+set vpn ipsec ike-group GCP-IKE lifetime '36000'
+set vpn ipsec ike-group GCP-IKE close-action 'start'
+set vpn ipsec ike-group GCP-IKE dead-peer-detection action 'restart'
+set vpn ipsec ike-group GCP-IKE dead-peer-detection interval '30'
+set vpn ipsec ike-group GCP-IKE dead-peer-detection timeout '120'
+set vpn ipsec ike-group GCP-IKE proposal 1 dh-group '14'
+set vpn ipsec ike-group GCP-IKE proposal 1 encryption 'aes256'
+set vpn ipsec ike-group GCP-IKE proposal 1 hash 'sha256'
+set vpn ipsec ike-group GCP-IKE proposal 1 prf 'prfsha256'
+
+# ---------- IPsec phase 2 (expect 6 lines from: | match GCP-ESP) ----------
+set vpn ipsec esp-group GCP-ESP lifetime '10800'
+set vpn ipsec esp-group GCP-ESP mode 'tunnel'
+set vpn ipsec esp-group GCP-ESP pfs 'dh-group14'
+set vpn ipsec esp-group GCP-ESP proposal 1 encryption 'aes256'
+set vpn ipsec esp-group GCP-ESP proposal 1 hash 'sha256'
+
+# ---------- Pre-shared key (value pasted from Secret Manager, never saved to a file) ----------
+set vpn ipsec authentication psk GCP id '<VYOS_WAN_IP>'
+set vpn ipsec authentication psk GCP id '<GCP_VPN_IP1>'
+set vpn ipsec authentication psk GCP secret '<PASTE_FROM_SECRET_MANAGER>'
+
+# ---------- Tunnel interface ----------
+set interfaces vti vti0 address '169.254.20.2/30'
+set interfaces vti vti0 description 'GCP HA VPN interface 1'
+set interfaces vti vti0 mtu '1400'
+set interfaces vti vti0 ip adjust-mss '1360'
+
+# ---------- Peer ----------
+set vpn ipsec interface 'eth0'
+set vpn ipsec site-to-site peer GCP-TUN1 description 'GCP HA VPN tunnel 1'
+set vpn ipsec site-to-site peer GCP-TUN1 authentication mode 'pre-shared-secret'
+set vpn ipsec site-to-site peer GCP-TUN1 authentication local-id '<VYOS_WAN_IP>'
+set vpn ipsec site-to-site peer GCP-TUN1 authentication remote-id '<GCP_VPN_IP1>'
+set vpn ipsec site-to-site peer GCP-TUN1 connection-type 'initiate'
+set vpn ipsec site-to-site peer GCP-TUN1 ike-group 'GCP-IKE'
+set vpn ipsec site-to-site peer GCP-TUN1 local-address '<VYOS_WAN_IP>'
+set vpn ipsec site-to-site peer GCP-TUN1 remote-address '<GCP_VPN_IP1>'
+set vpn ipsec site-to-site peer GCP-TUN1 vti bind 'vti0'
+set vpn ipsec site-to-site peer GCP-TUN1 vti esp-group 'GCP-ESP'
+
+# ---------- BGP (the network line is LAST and easy to lose: expect 9 lines from | match 'protocols bgp') ----------
+set protocols bgp system-as '65003'
+set protocols bgp parameters router-id '10.2.20.1'
+set protocols bgp parameters log-neighbor-changes
+set protocols bgp neighbor 169.254.20.1 remote-as '65001'
+set protocols bgp neighbor 169.254.20.1 description 'GCP Cloud Router'
+set protocols bgp neighbor 169.254.20.1 address-family ipv4-unicast soft-reconfiguration inbound
+set protocols bgp neighbor 169.254.20.1 timers keepalive '20'
+set protocols bgp neighbor 169.254.20.1 timers holdtime '60'
+set protocols bgp address-family ipv4-unicast network '10.2.20.0/24'
+
+# ---------- Route filtering ----------
+set policy prefix-list TO-GCP rule 10 action 'permit'
+set policy prefix-list TO-GCP rule 10 prefix '10.2.20.0/24'
+set policy prefix-list FROM-GCP rule 10 action 'permit'
+set policy prefix-list FROM-GCP rule 10 prefix '10.8.0.0/16'
+set policy prefix-list FROM-GCP rule 10 le '32'
+set policy route-map GCP-OUT rule 10 action 'permit'
+set policy route-map GCP-OUT rule 10 match ip address prefix-list 'TO-GCP'
+set policy route-map GCP-IN rule 10 action 'permit'
+set policy route-map GCP-IN rule 10 match ip address prefix-list 'FROM-GCP'
+set protocols bgp neighbor 169.254.20.1 address-family ipv4-unicast route-map export 'GCP-OUT'
+set protocols bgp neighbor 169.254.20.1 address-family ipv4-unicast route-map import 'GCP-IN'
+
+# ---------- Firewall: input (traffic TO the router) ----------
+set firewall ipv4 input filter default-action 'drop'
+set firewall ipv4 input filter rule 10 action 'accept'
+set firewall ipv4 input filter rule 10 description 'Established and related'
+set firewall ipv4 input filter rule 10 state 'established'
+set firewall ipv4 input filter rule 10 state 'related'
+set firewall ipv4 input filter rule 20 action 'accept'
+set firewall ipv4 input filter rule 20 description 'ICMP'
+set firewall ipv4 input filter rule 20 protocol 'icmp'
+set firewall ipv4 input filter rule 30 action 'accept'
+set firewall ipv4 input filter rule 30 description 'SSH from LAN only'
+set firewall ipv4 input filter rule 30 protocol 'tcp'
+set firewall ipv4 input filter rule 30 destination port '22'
+set firewall ipv4 input filter rule 30 inbound-interface name 'eth1'
+set firewall ipv4 input filter rule 40 action 'accept'
+set firewall ipv4 input filter rule 40 description 'IKE and NAT-T from GCP only'
+set firewall ipv4 input filter rule 40 protocol 'udp'
+set firewall ipv4 input filter rule 40 destination port '500,4500'
+set firewall ipv4 input filter rule 40 source address '<GCP_VPN_IP1>'
+set firewall ipv4 input filter rule 41 action 'accept'
+set firewall ipv4 input filter rule 41 description 'ESP from GCP only'
+set firewall ipv4 input filter rule 41 protocol 'esp'
+set firewall ipv4 input filter rule 41 source address '<GCP_VPN_IP1>'
+set firewall ipv4 input filter rule 50 action 'accept'
+set firewall ipv4 input filter rule 50 description 'BGP over VTI'
+set firewall ipv4 input filter rule 50 protocol 'tcp'
+set firewall ipv4 input filter rule 50 destination port '179'
+set firewall ipv4 input filter rule 50 inbound-interface name 'vti0'
+set firewall ipv4 input filter rule 60 action 'accept'
+set firewall ipv4 input filter rule 60 description 'DHCP and DNS from LAN'
+set firewall ipv4 input filter rule 60 inbound-interface name 'eth1'
+set firewall ipv4 input filter rule 60 protocol 'udp'
+set firewall ipv4 input filter rule 60 destination port '53,67'
+
+# ---------- Firewall: forward (traffic THROUGH the router) ----------
+set firewall ipv4 forward filter default-action 'drop'
+set firewall ipv4 forward filter rule 10 action 'accept'
+set firewall ipv4 forward filter rule 10 state 'established'
+set firewall ipv4 forward filter rule 10 state 'related'
+set firewall ipv4 forward filter rule 20 action 'accept'
+set firewall ipv4 forward filter rule 20 description 'LAN outbound'
+set firewall ipv4 forward filter rule 20 inbound-interface name 'eth1'
+set firewall ipv4 forward filter rule 30 action 'accept'
+set firewall ipv4 forward filter rule 30 description 'GCP to lab (return path)'
+set firewall ipv4 forward filter rule 30 inbound-interface name 'vti0'

@@ -1,0 +1,8 @@
+# Store text files with LF line endings in the repo, whatever OS edits them.
+# Without this, Windows can save scripts with CRLF and bash refuses to run them
+# ("bad interpreter: /usr/bin/env bash^M").
+* text=auto eol=lf
+*.sh text eol=lf
+*.zip binary
+*.png binary
+*.jpg binary

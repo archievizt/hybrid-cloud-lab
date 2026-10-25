@@ -15,7 +15,6 @@ No secrets are stored here. Pre-shared keys live in Google Secret Manager.
 | Path | What it is |
 |---|---|
 | `docs/BEGINNER_GUIDE.md` | Step-by-step build, explained in plain language |
-| `docs/PUBLISHING_GUIDE.md` | How to publish this repo safely, step by step |
 | `terraform/` | The GCP side as code |
 | `configs/vyos/vyos-edge.commands.example` | Full VyOS config with placeholders |
 | `.env.example` | Non-secret lab values to copy to `~/.hybrid-lab.env` |
